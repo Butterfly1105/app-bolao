@@ -142,11 +142,13 @@ export async function generatePredictionsPDF(
   doc.save(`bolao-copa-2026-${profile?.name?.replace(/\s+/g, '-').toLowerCase() ?? 'palpites'}.pdf`)
 }
 
-export function sharePDFWhatsApp(text: string): void {
-  const encoded = encodeURIComponent(text)
-  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
-  const url = isMobile
-    ? `whatsapp://send?text=${encoded}`
-    : `https://web.whatsapp.com/send?text=${encoded}`
-  window.open(url, '_blank')
-}
+export async function generateRoundPDF(
+  roundNumber: number,
+  matches: any[],
+  profile: any,
+  predictions: Map<string, any>
+): Promise<void> {
+  const { jsPDF } = await import('jspdf')
+  const { default: autoTable } = await import('jspdf-autotable')
+
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', 

@@ -1,13 +1,13 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { Target, FileText, MessageCircle, Loader2, Check, ChevronDown, ChevronUp } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Target, FileText, MessageCircle, Loader2, Check, ChevronDown, ChevronUp, Download } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import { formatDate, formatTime, isPastMatch } from '@/lib/utils'
 import { getPointsBg } from '@/lib/scoring'
 import { Match, Prediction, STAGE_LABELS, MatchStage } from '@/types'
-import { generatePredictionsPDF, sharePDFWhatsApp } from '@/lib/pdf'
+import { generatePredictionsPDF, generateRoundPDF, sharePDFWhatsApp } from '@/lib/pdf'
 
 interface MatchWithPred extends Match {
   prediction?: Prediction | null
@@ -113,7 +113,7 @@ function MatchPredictionCard({
           </div>
         </div>
 
-        {/* Result exibição */}
+        {/* Result */}
         {isFinished && match.home_score !== null && (
           <div className="mt-3 text-center text-sm text-gray-500 dark:text-gray-400">
             Resultado: <span className="font-bold text-gray-900 dark:text-white">
@@ -143,14 +143,22 @@ function MatchPredictionCard({
   )
 }
 
+const ROUND_DATES: Record<number, string> = {
+  1: '11 a 17 de junho',
+  2: '18 a 23 de junho',
+  3: '24 a 27 de junho',
+}
+
 export default function PalpitesPage() {
   const [matches, setMatches] = useState<MatchWithPred[]>([])
   const [predictions, setPredictions] = useState<Map<string, Prediction>>(new Map())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
   const [profile, setProfile] = useState<any>(null)
-  const [expandedStage, setExpandedStage] = useState<MatchStage>('group')
+  const [expandedStage, setExpandedStage] = useState<MatchStage | ''>('group')
+  const [expandedRound, setExpandedRound] = useState<number | null>(1)
   const [generatingPDF, setGeneratingPDF] = useState(false)
+  const [generatingRoundPDF, setGeneratingRoundPDF] = useState<number | null>(null)
   const supabase = createClient()
 
   useEffect(() => {
@@ -220,29 +228,32 @@ export default function PalpitesPage() {
   const handleGeneratePDF = async () => {
     setGeneratingPDF(true)
     try {
-      const matchesWithPreds = matches.map(m => ({
-        ...m,
-        prediction: predictions.get(m.id) ?? null,
-      }))
+      const matchesWithPreds = matches.map(m => ({ ...m, prediction: predictions.get(m.id) ?? null }))
       await generatePredictionsPDF(matchesWithPreds, profile, predictions)
-      toast.success('PDF gerado com sucesso!')
-    } catch (err) {
+      toast.success('PDF completo gerado!')
+    } catch {
       toast.error('Erro ao gerar PDF')
     } finally {
       setGeneratingPDF(false)
     }
   }
 
-  const handleShareWhatsApp = async () => {
-    const text = buildWhatsAppText()
-    sharePDFWhatsApp(text)
+  const handleGenerateRoundPDF = async (roundNumber: number, roundMatches: MatchWithPred[]) => {
+    setGeneratingRoundPDF(roundNumber)
+    try {
+      await generateRoundPDF(roundNumber, roundMatches, profile, predictions)
+      toast.success(`PDF Rodada ${roundNumber} gerado!`)
+    } catch {
+      toast.error('Erro ao gerar PDF')
+    } finally {
+      setGeneratingRoundPDF(null)
+    }
   }
 
-  const buildWhatsAppText = () => {
+  const handleShareWhatsApp = () => {
     const predCount = predictions.size
     const lines = [`🏆 *Bolão da Copa 2026 - Palpites de ${profile?.name ?? 'Participante'}*\n`]
     lines.push(`📊 Total de palpites: ${predCount}\n`)
-
     const grouped = matches.reduce((acc, m) => {
       const stage = m.stage
       if (!acc[stage]) acc[stage] = []
@@ -254,27 +265,35 @@ export default function PalpitesPage() {
       }
       return acc
     }, {} as Record<string, string[]>)
-
     Object.entries(grouped).forEach(([stage, preds]) => {
       if (preds.length > 0) {
         lines.push(`\n*${STAGE_LABELS[stage as MatchStage]}*`)
         preds.forEach(p => lines.push(p))
       }
     })
-
     lines.push('\n_Gerado pelo Bolão da Copa 2026_ ⚽')
-    return lines.join('\n')
+    sharePDFWhatsApp(lines.join('\n'))
   }
 
+  // Group matches by stage
   const matchesByStage = matches.reduce((acc, m) => {
     if (!acc[m.stage]) acc[m.stage] = []
     acc[m.stage].push(m)
     return acc
   }, {} as Record<MatchStage, MatchWithPred[]>)
 
+  // Within group stage, group by round_number (sorted chronologically)
+  const groupStageMatches = matchesByStage['group'] ?? []
+  const matchesByRound: Record<number, MatchWithPred[]> = {}
+  for (const m of groupStageMatches) {
+    const r = m.round_number ?? 1
+    if (!matchesByRound[r]) matchesByRound[r] = []
+    matchesByRound[r].push(m)
+  }
+  const roundNumbers = Object.keys(matchesByRound).map(Number).sort((a, b) => a - b)
+
   const stageOrder: MatchStage[] = ['group', 'round_of_16', 'quarter_final', 'semi_final', 'third_place', 'final']
   const predCount = predictions.size
-  const totalMatches = matches.filter(m => !isPastMatch(m.match_date) || m.status !== 'scheduled').length
 
   if (loading) {
     return (
@@ -300,7 +319,6 @@ export default function PalpitesPage() {
           </div>
         </div>
 
-        {/* Ações PDF/WhatsApp */}
         {predCount > 0 && (
           <div className="flex gap-2 flex-wrap">
             <button
@@ -309,7 +327,7 @@ export default function PalpitesPage() {
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition shadow"
             >
               {generatingPDF ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-              Gerar PDF
+              PDF Completo
             </button>
             <button
               onClick={handleShareWhatsApp}
@@ -325,12 +343,8 @@ export default function PalpitesPage() {
       {/* Progresso */}
       <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            Progresso dos palpites
-          </span>
-          <span className="text-sm font-bold text-green-600 dark:text-green-400">
-            {predCount} / {matches.length}
-          </span>
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Progresso dos palpites</span>
+          <span className="text-sm font-bold text-green-600 dark:text-green-400">{predCount} / {matches.length}</span>
         </div>
         <div className="h-2.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
           <div
@@ -352,8 +366,9 @@ export default function PalpitesPage() {
 
         return (
           <div key={stage} className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden">
+            {/* Stage header */}
             <button
-              onClick={() => setExpandedStage(isExpanded ? '' as any : stage)}
+              onClick={() => setExpandedStage(isExpanded ? '' : stage)}
               className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition"
             >
               <div className="flex items-center gap-3">
@@ -364,30 +379,4 @@ export default function PalpitesPage() {
                     : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
                 }`}>
                   {stagePreds}/{stageMatches.length}
-                </span>
-              </div>
-              {isExpanded
-                ? <ChevronUp className="w-5 h-5 text-gray-400" />
-                : <ChevronDown className="w-5 h-5 text-gray-400" />
-              }
-            </button>
-
-            {isExpanded && (
-              <div className="px-4 pb-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-3 border-t border-gray-100 dark:border-gray-800 pt-4">
-                {stageMatches.map(match => (
-                  <MatchPredictionCard
-                    key={match.id}
-                    match={match}
-                    prediction={predictions.get(match.id) ?? null}
-                    onSave={handleSavePrediction}
-                    saving={saving === match.id}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
+        
