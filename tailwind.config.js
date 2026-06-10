@@ -1,6 +1,5 @@
-import type { Config } from 'tailwindcss'
-
-const config: Config = {
+/** @type {import('tailwindcss').Config} */
+module.exports = {
   darkMode: 'class',
   content: [
     './pages/**/*.{js,ts,jsx,tsx,mdx}',
@@ -28,7 +27,6 @@ const config: Config = {
           500: '#f59e0b',
           600: '#d97706',
         },
-        border: 'hsl(214.3 31.8% 91.4%)',
       },
       fontFamily: {
         sans: ['var(--font-inter)', 'system-ui', 'sans-serif'],
@@ -37,5 +35,3 @@ const config: Config = {
   },
   plugins: [],
 }
-
-export default config
